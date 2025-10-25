@@ -14,8 +14,8 @@ MACHINES=(
   "e2-standard-4"
   "n2-standard-4"
   "c2-standard-4"
-  "m1-ultramem-2"
-  "e2-standard-4-preemptible"
+  "c4-standard-2"
+  "e2-highmem-4"
 )
 
 IMAGE_FAMILY="ubuntu-2204-lts"
