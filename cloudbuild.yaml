@@ -28,14 +28,6 @@ steps:
       - 'BUCKET=${_BUCKET}'
       - 'PROJECT_ID=${PROJECT_ID}'
 
-  # Step 4: Tear down infrastructure (optional cleanup)
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'teardown'
-    entrypoint: 'bash'
-    args:
-      - ./scripts/teardown.sh
-    env:
-      - 'PROJECT_ID=${PROJECT_ID}'
 
 options:
   logging: CLOUD_LOGGING_ONLY
