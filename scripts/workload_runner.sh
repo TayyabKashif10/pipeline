@@ -192,44 +192,6 @@ run_sysbench_memory() {
 }
 
 # -------------------------
-# Test: Disk I/O (fio)
-# -------------------------
-run_fio() {
-  local name="fio"
-  log "=== FIO disk I/O test ==="
-  start_sysmon "$name"
-  # fio JSON output for parsing
-  fio --name=randread --rw=randread --bs=4k --iodepth=32 --numjobs=4 --runtime="$RUN_TIME" --time_based --direct=1 --size=1G --output-format=json > "$OUTDIR/${name}_randread.json" 2>&1 || true
-  fio --name=randwrite --rw=randwrite --bs=4k --iodepth=32 --numjobs=4 --runtime="$RUN_TIME" --time_based --direct=1 --size=1G --output-format=json > "$OUTDIR/${name}_randwrite.json" 2>&1 || true
-  stop_sysmon
-  top_snapshot
-  # merge metadata mention
-  jq --arg nm "$name" --slurpfile r1 "$OUTDIR/${name}_randread.json" --slurpfile r2 "$OUTDIR/${name}_randwrite.json" \
-    '.tests[$nm] = {read: ($r1[0] | tostring), write: ($r2[0] | tostring), type:"fio"}' "$RESULTS_JSON" > "$RESULTS_JSON.tmp" && mv "$RESULTS_JSON.tmp" "$RESULTS_JSON"
-}
-
-# -------------------------
-# Test: Network (iperf3)
-# -------------------------
-# We'll run iperf3 in server mode locally and client locally as well to test loopback networking
-# If you want remote network tests, you must point client to a different host.
-run_iperf3_local() {
-  local name="iperf3"
-  log "=== iperf3 network test (local server->client) ==="
-  # run server in background
-  iperf3 -s -D || log "iperf3 server failed to background; continuing"
-  sleep 1
-  start_sysmon "$name"
-  # run client connecting to localhost (measures network stack & NIC)
-  iperf3 -c 127.0.0.1 -t "$RUN_TIME" --json > "$OUTDIR/${name}_client.json" 2>&1 || true
-  stop_sysmon
-  # stop server
-  pkill iperf3 || true
-  top_snapshot
-  jq --arg nm "$name" --slurpfile r "$OUTDIR/${name}_client.json" '.tests[$nm] = {client: ($r[0] | tostring), type:"iperf3"}' "$RESULTS_JSON" > "$RESULTS_JSON.tmp" && mv "$RESULTS_JSON.tmp" "$RESULTS_JSON"
-}
-
-# -------------------------
 # Test: Postgres OLTP (pgbench)
 # -------------------------
 run_pgbench() {
@@ -277,12 +239,6 @@ for t in "${WORKLOADS[@]}"; do
       ;;
     memory)
       run_sysbench_memory
-      ;;
-    fio)
-      run_fio
-      ;;
-    net|iperf3)
-      run_iperf3_local
       ;;
     pgbench)
       run_pgbench
