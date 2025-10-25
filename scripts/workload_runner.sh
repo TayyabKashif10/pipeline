@@ -2,37 +2,29 @@
 set -euo pipefail
 
 # =========================
-# workload_runner_fixed.sh
-# - More modular than original: functions + main
-# - Waits indefinitely for apt locks; retry supports infinite retries (tries=0)
-# - Ensures required tools are installed before use
-# - Uses jq --rawfile to capture raw text outputs safely
-# - Safer handling of background collectors with PIDs
 # Usage: sudo ./workload_runner_fixed.sh <WORKLOAD> <WARMUP_SEC> <RUN_TIME_SEC> <GCS_OUT>
-# Example: sudo ./workload_runner_fixed.sh all 60 300 gs://my-bucket/results/my-instance
 # =========================
 
-# -------------------------
-# Defaults / Globals
-# -------------------------
+
 WORKLOAD=${1:-all}         # "all" or comma-separated list: cpu,mem,pgbench
 WARMUP=${2:-60}
 RUN_TIME=${3:-300}
+# where results will be saved in storage bucket
 GCS_OUT=${4:-}
+# where results will be saved locally
 OUTDIR="/tmp/bench-$(date -u +%s)"
 mkdir -p "$OUTDIR"
 
 RESULTS_JSON="$OUTDIR/results_summary.json"
 INSTANCE_META_JSON="$OUTDIR/instance_meta.json"
 
+# collect default starts VMSTAT and IOSTAT
 VMSTAT_PID=""
 IOSTAT_PID=""
 
 log() { echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*"; }
 
-# -------------------------
-# Utilities
-# -------------------------
+# Utility to retry commands that fail (due to resource contention etc), make the system more robust
 retry() {
   # retry <tries> <cmd...>
   # tries == 0 => infinite
@@ -50,6 +42,9 @@ retry() {
     sleep 5
   done
 }
+
+# these were required since a lot of the resources needed to run the commands kept getting locked.
+# this attempts to acquire locks and waits until it doesn't get them.
 
 wait_for_apt_locks() {
   log "Waiting for apt/dpkg locks to clear..."
@@ -79,23 +74,22 @@ enable_repos() {
 }
 
 safe_apt_install() {
-  # safe_apt_install <pkg1> <pkg2> ...
   quiesce_apt_background_jobs
   retry 0 sudo apt-get update -y
   retry 0 sudo apt-get install -y --no-install-recommends "$@"
 }
 
 # -------------------------
-# Tooling / environment
+# Dependencies for the testbenches
 # -------------------------
 ensure_tools() {
   enable_repos
-  log "Installing required packages... (this may retry forever until success)"
-  # add common packages used below - keep this set minimal and extensible
+  log "Installing required packages..."
   safe_apt_install jq curl git dstat sysstat sysbench postgresql postgresql-client build-essential
   log "Required tools installed"
 }
 
+# data of the VM instance.
 capture_instance_metadata() {
   log "Capturing instance metadata (if running on GCE)"
   if command -v curl >/dev/null 2>&1; then
@@ -107,6 +101,7 @@ capture_instance_metadata() {
   fi
 }
 
+# upload local results to google storage bucket
 upload_results() {
   if [ -z "$GCS_OUT" ]; then
     log "No GCS_OUT configured; skipping upload"

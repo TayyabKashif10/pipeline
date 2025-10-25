@@ -11,10 +11,10 @@ mkdir -p "$RESULTS_DIR"
 
 # Machine types to test
 MACHINES=(
-  "e2-standard-4"
-  "n2-standard-4"
-  "c2-standard-4"
-  "c4-standard-2"
+#   "e2-standard-4"
+#   "n2-standard-4"
+#   "c2-standard-4"
+#   "c4-standard-2"
   "e2-highmem-4"
 )
 
