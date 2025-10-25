@@ -35,4 +35,5 @@ options:
 substitutions:
   _BUCKET: "placeholder-bucket-name"
 
-timeout: 3600s
+# timeout 2 hours
+timeout: 7200s
