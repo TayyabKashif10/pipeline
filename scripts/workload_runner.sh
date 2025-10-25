@@ -56,6 +56,7 @@ wait_for_apt_locks() {
   log "Apt locks cleared."
 }
 
+# stop background jobs that may contend for apt
 quiesce_apt_background_jobs() {
   log "Stopping/masking apt background services (best-effort)"
   sudo systemctl stop apt-daily.service apt-daily-upgrade.service unattended-upgrades.service || true
@@ -66,8 +67,9 @@ quiesce_apt_background_jobs() {
   wait_for_apt_locks
 }
 
+# enable some repos that are disabled by default (some were required for benchmarks)
 enable_repos() {
-  log "Enabling repos (best-effort)"
+  log "Enabling disabled repo"
   sudo sed -i 's/^#\s*\(deb .*\)/\1/' /etc/apt/sources.list || true
   sudo find /etc/apt/sources.list.d -type f -name "*.list" -exec sed -i 's/^#\s*\(deb .*\)/\1/' {} \; || true
   wait_for_apt_locks
@@ -109,7 +111,7 @@ upload_results() {
   fi
   if command -v gsutil >/dev/null 2>&1; then
     log "Uploading results to $GCS_OUT"
-    gsutil -m cp -r "$OUTDIR" "$GCS_OUT" || log "⚠️ Upload failed"
+    gsutil -m cp -r "$OUTDIR"/* "$GCS_OUT" || log "⚠️ Upload failed"
     return
   fi
 
@@ -126,7 +128,7 @@ upload_results() {
 }
 
 # -------------------------
-# System monitoring
+# System monitoring (VMSTAT, IOSTAT)
 # -------------------------
 start_sysmon() {
   local prefix=$1
@@ -148,6 +150,7 @@ stop_sysmon() {
   log "Stopped sysmon collectors"
 }
 
+# process activity, also logged
 top_snapshot() {
   top -b -n1 > "$OUTDIR/metrics/top-$(date -u +%s).txt" || true
 }
@@ -239,9 +242,9 @@ main() {
 
   for t in "${WORKLOADS[@]}"; do
     case "$t" in
-      cpu) run_sysbench_cpu ;;
+    #   cpu) run_sysbench_cpu ;;
       memory) run_sysbench_memory ;;
-      pgbench) run_pgbench ;;
+    #   pgbench) run_pgbench ;;
       *) log "Unknown workload $t, skipping" ;;
     esac
     log "Completed test: $t"
