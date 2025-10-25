@@ -12,11 +12,12 @@ mkdir -p "$RESULTS_DIR"
 # Machine types to test
 MACHINES=(
   "e2-standard-4"
-  "n2-standard-4"
-  "c2-standard-4"
-  "c4-standard-2"
-  "e2-highmem-4"
 )
+
+#   "n2-standard-4"
+#   "c2-standard-4"
+#   "c4-standard-2"
+#   "e2-highmem-4"
 
 IMAGE_FAMILY="ubuntu-2204-lts"
 IMAGE_PROJECT="ubuntu-os-cloud"

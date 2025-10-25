@@ -6,8 +6,11 @@ set -euo pipefail
 # - Ensures apt-related background jobs are disabled/masked before installing
 # - wait_for_apt_locks will wait indefinitely until locks clear
 # - retry supports infinite retries if tries is 0
-# - safe_apt_install will retry apt-get operations indefinitely (per your request)
-# Usage: workload_runner.sh <WORKLOAD> <WARMUP_SEC> <RUN_TIME_SEC> <GCS_OUT>
+# - safe_apt_install will retry apt-get operations indefinitely
+# - Fix: ensures tools (jq) are installed *before* use
+# - Fix: ensures 'all' workload properly expands
+# - Fix: ensures jq failures don't halt the 'all' workload loop (due to set -e)
+# Usage: sudo ./workload_runner.sh <WORKLOAD> <WARMUP_SEC> <RUN_TIME_SEC> <GCS_OUT>
 # Example: sudo ./workload_runner.sh all 60 300 gs://my-bucket/results/my-instance
 # =========================
 
@@ -125,7 +128,7 @@ upload_results() {
 ensure_tools() {
   enable_repos
   log "Installing required packages (sysbench jq curl git dstat sysstat postgresql)..."
-  # This will retry forever if necessary (per your request)
+  # This will retry forever if necessary
   safe_apt_install jq curl git dstat sysstat sysbench postgresql postgresql-client build-essential
   log "Tool install complete."
 }
@@ -168,8 +171,9 @@ run_sysbench_cpu() {
   sysbench cpu --threads=$(nproc) --time="$RUN_TIME" run > "$OUTDIR/${name}_run.txt" 2>&1 || true
   stop_sysmon
   top_snapshot
+  # FIX: Added '|| true' to prevent set -e from exiting on jq failure
   jq --arg nm "$name" --slurpfile txt "$OUTDIR/${name}_run.txt" \
-     '.tests[$nm] = {raw: ($txt[0] | tostring), type:"sysbench_cpu"}' "$RESULTS_JSON" > "$RESULTS_JSON.tmp" && mv "$RESULTS_JSON.tmp" "$RESULTS_JSON"
+     '.tests[$nm] = {raw: ($txt[0] | tostring), type:"sysbench_cpu"}' "$RESULTS_JSON" > "$RESULTS_JSON.tmp" && mv "$RESULTS_JSON.tmp" "$RESULTS_JSON" || true
 }
 
 run_sysbench_memory() {
@@ -180,8 +184,9 @@ run_sysbench_memory() {
     --threads=$(nproc) --time="$RUN_TIME" run > "$OUTDIR/${name}_run.txt" 2>&1 || true
   stop_sysmon
   top_snapshot
+  # FIX: Added '|| true' to prevent set -e from exiting on jq failure
   jq --arg nm "$name" --slurpfile txt "$OUTDIR/${name}_run.txt" \
-     '.tests[$nm] = {raw: ($txt[0] | tostring), type:"sysbench_memory"}' "$RESULTS_JSON" > "$RESULTS_JSON.tmp" && mv "$RESULTS_JSON.tmp" "$RESULTS_JSON"
+     '.tests[$nm] = {raw: ($txt[0] | tostring), type:"sysbench_memory"}' "$RESULTS_JSON" > "$RESULTS_JSON.tmp" && mv "$RESULTS_JSON.tmp" "$RESULTS_JSON" || true
 }
 
 run_pgbench() {
@@ -197,8 +202,9 @@ run_pgbench() {
   JT=$((CL/2>0?CL/2:1))
   sudo -u postgres pgbench -c "$CL" -j "$JT" -T "$RUN_TIME" -r benchdb > "$OUTDIR/${name}_run.txt" 2>&1 || true
   top_snapshot
+  # FIX: Added '|| true' to prevent set -e from exiting on jq failure
   jq --arg nm "$name" --slurpfile r "$OUTDIR/${name}_run.txt" \
-     '.tests[$nm] = {raw: ($r[0] | tostring), type:"pgbench"}' "$RESULTS_JSON" > "$RESULTS_JSON.tmp" && mv "$RESULTS_JSON.tmp" "$RESULTS_JSON"
+     '.tests[$nm] = {raw: ($r[0] | tostring), type:"pgbench"}' "$RESULTS_JSON" > "$RESULTS_JSON.tmp" && mv "$RESULTS_JSON.tmp" "$RESULTS_JSON" || true
 }
 
 # -------------------------
@@ -206,15 +212,29 @@ run_pgbench() {
 # -------------------------
 trap 'rc=$?; log "Trap exit code=$rc"; upload_results; exit $rc' EXIT
 
+# FIX: Install tools *first*, before they are needed by capture_instance_metadata (curl)
+# or the results summary (jq).
+ensure_tools
+
 capture_instance_metadata
 jq -n '{instance:{}, tests:{}}' > "$RESULTS_JSON"
 
-ensure_tools
-
 IFS=',' read -r -a WORKLOADS <<< "$WORKLOAD"
-if [[ " ${WORKLOADS[*]} " =~ " all " ]]; then
+
+# FIX: Robust 'all' check
+local found_all=0
+for t in "${WORKLOADS[@]}"; do
+  if [[ "$t" == "all" ]]; then
+    found_all=1
+    break
+  fi
+done
+
+if [[ "$found_all" -eq 1 ]]; then
+  log "Found 'all' workload, expanding to: cpu, memory, pgbench"
   WORKLOADS=(cpu memory pgbench)
 fi
+# --- End of FIX
 
 for t in "${WORKLOADS[@]}"; do
   case "$t" in
@@ -227,7 +247,8 @@ for t in "${WORKLOADS[@]}"; do
   sleep 5
 done
 
-jq --arg ts "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" '.run_completed_at=$ts' "$RESULTS_JSON" > "$RESULTS_JSON.tmp" && mv "$RESULTS_JSON.tmp" "$RESULTS_JSON"
+# FIX: Added '|| true'
+jq --arg ts "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" '.run_completed_at=$ts' "$RESULTS_JSON" > "$RESULTS_JSON.tmp" && mv "$RESULTS_JSON.tmp" "$RESULTS_JSON" || true
 upload_results
 log "✅ All workloads completed. Results in $OUTDIR"
 exit 0
