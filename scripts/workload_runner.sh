@@ -111,19 +111,8 @@ upload_results() {
   fi
   if command -v gsutil >/dev/null 2>&1; then
     log "Uploading results to $GCS_OUT"
-    gsutil -m cp -r "$OUTDIR"/* "$GCS_OUT" || log "⚠️ Upload failed"
+    gsutil -m cp -r "$OUTDIR" "$GCS_OUT" || log "⚠️ Upload failed"
     return
-  fi
-
-  log "gsutil not found; attempting to install google-cloud-sdk (best-effort)"
-  quiesce_apt_background_jobs
-  set +e
-  retry 0 sudo apt-get update -y && retry 0 sudo apt-get install -y google-cloud-sdk || true
-  set -e
-  if command -v gsutil >/dev/null 2>&1; then
-    gsutil -m cp -r "$OUTDIR" "$GCS_OUT" || log "⚠️ Upload failed after install"
-  else
-    log "⚠️ gsutil still missing after attempt; skipping upload"
   fi
 }
 

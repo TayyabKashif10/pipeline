@@ -6,8 +6,6 @@ PROJECT=$(gcloud config get-value project)
 REGION=us-central1
 ZONE=us-central1-a
 BUCKET="${PROJECT}-storage"
-RESULTS_DIR="results/$(date +%Y%m%d_%H%M%S)"
-mkdir -p "$RESULTS_DIR"
 
 # Machine types to test
 MACHINES=(
@@ -94,9 +92,6 @@ for machine in "${MACHINES[@]}"; do
     echo "⚠️ Workload failed on $inst_name"
   fi
 
-  echo "📥 Fetching results for $inst_name..."
-  gsutil -m cp -r "gs://$BUCKET/results/$inst_name" "$RESULTS_DIR/" || echo "⚠️ No results found for $inst_name"
-
   # Cleanup
   teardown_instance "$inst_name"
 
@@ -104,16 +99,5 @@ for machine in "${MACHINES[@]}"; do
   echo
 done
 
-# Manifest
-cat > "$RESULTS_DIR/manifest.txt" <<EOF
-project: $PROJECT
-zone: $ZONE
-machines: ${MACHINES[*]}
-workload: $WORKLOAD
-workload_run_time: $WORKLOAD_RUN_TIME
-date: $(date -u)
-EOF
 
 echo "📦 All benchmarks complete."
-echo "Results stored in $RESULTS_DIR"
-mv "$RESULTS_DIR" "$OUT_DIR/results" || true
