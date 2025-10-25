@@ -111,7 +111,7 @@ upload_results() {
   fi
   if command -v gsutil >/dev/null 2>&1; then
     log "Uploading results to $GCS_OUT"
-    gsutil -m cp -r "$OUTDIR" "$GCS_OUT" || log "⚠️ Upload failed"
+    gsutil -m cp -r "${OUTDIR}/*" "$GCS_OUT" || log "⚠️ Upload failed"
     return
   fi
 }
