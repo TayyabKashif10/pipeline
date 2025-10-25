@@ -1,51 +1,56 @@
-# cloudbuild.yaml
 steps:
-# 1. Setup variables (substitute via Cloud Build substitutions or env)
-- name: 'gcr.io/cloud-builders/gcloud'
-  entrypoint: 'bash'
-  args:
-  - -c
-  - |
-    set -e
-    export PROJECT=$(gcloud config get-value project)
-    echo "PROJECT=$PROJECT" > /workspace/envvars
+  # Step 1: Enable required APIs
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'enable-apis'
+    args:
+      - services
+      - enable
+      - compute.googleapis.com
+      - monitoring.googleapis.com
+      - logging.googleapis.com
+      - storage.googleapis.com
 
-# 2. Provision VMs and start workloads (this script will SSH or use startup scripts)
-- name: 'gcr.io/cloud-builders/gcloud'
-  entrypoint: 'bash'
-  args:
-  - -c
-  - |
-    set -e
-    bash scripts/provision_and_run.sh /workspace
+  # Step 2: Upload workload runner to Cloud Storage bucket
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: 'upload-workload-runner'
+    args:
+      - cp
+      - workload_runner.sh
+      - gs://${_BUCKET}/startup_scripts/workload_runner.sh
 
-# 3. Wait for runs to complete and copy results to GCS
-- name: 'gcr.io/cloud-builders/gsutil'
-  args: ['-m', 'cp', '-r', 'results/*', 'gs://$PROJECT-storage/']
-  env:
-  - 'CLOUDSDK_CORE_PROJECT=$PROJECT'
+  # Step 3: Provision VMs and run benchmarks
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'provision-and-run'
+    entrypoint: 'bash'
+    args:
+      - ./provision_and_run.sh
+    env:
+      - 'BUCKET=${_BUCKET}'
+      - 'PROJECT_ID=${PROJECT_ID}'
 
-# 4. Run analysis script (generate graphs, CSVs)
-- name: 'python:3.10'
-  entrypoint: 'bash'
-  args:
-  - -c
-  - |
-    pip install google-cloud-monitoring pandas matplotlib
-    python3 scripts/collect_metrics.py --out-dir results/metrics
+  # Step 4: Collect metrics from monitoring/logs
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'collect-metrics'
+    entrypoint: 'bash'
+    args:
+      - ./collect_metrics.sh
+    env:
+      - 'BUCKET=${_BUCKET}'
+      - 'PROJECT_ID=${PROJECT_ID}'
 
-# 5. Upload analysis to GCS
-- name: 'gcr.io/cloud-builders/gsutil'
-  args: ['-m', 'cp', '-r', 'results', 'gs://$PROJECT-storage/']
-  env:
-  - 'CLOUDSDK_CORE_PROJECT=$PROJECT'
+  # Step 5: Tear down infrastructure (optional cleanup)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'teardown'
+    entrypoint: 'bash'
+    args:
+      - ./teardown.sh
+    env:
+      - 'PROJECT_ID=${PROJECT_ID}'
 
-# 6. Tear down resources
-- name: 'gcr.io/cloud-builders/gcloud'
-  entrypoint: 'bash'
-  args:
-  - -c
-  - |
-    bash scripts/teardown.sh
+options:
+  logging: CLOUD_LOGGING_ONLY
 
-timeout: '7200s'
+substitutions:
+  _BUCKET: "placeholder-bucket-name"
+
+timeout: 3600s
