@@ -15,7 +15,7 @@ steps:
     id: 'upload-workload-runner'
     args:
       - cp
-      - workload_runner.sh
+      - scripts/workload_runner.sh
       - gs://${_BUCKET}/startup_scripts/workload_runner.sh
 
   # Step 3: Provision VMs and run benchmarks
@@ -23,27 +23,17 @@ steps:
     id: 'provision-and-run'
     entrypoint: 'bash'
     args:
-      - ./provision_and_run.sh
+      - ./scripts/provision_and_run.sh
     env:
       - 'BUCKET=${_BUCKET}'
       - 'PROJECT_ID=${PROJECT_ID}'
 
-  # Step 4: Collect metrics from monitoring/logs
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'collect-metrics'
-    entrypoint: 'bash'
-    args:
-      - ./collect_metrics.sh
-    env:
-      - 'BUCKET=${_BUCKET}'
-      - 'PROJECT_ID=${PROJECT_ID}'
-
-  # Step 5: Tear down infrastructure (optional cleanup)
+  # Step 4: Tear down infrastructure (optional cleanup)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'teardown'
     entrypoint: 'bash'
     args:
-      - ./teardown.sh
+      - ./scripts/teardown.sh
     env:
       - 'PROJECT_ID=${PROJECT_ID}'
 
