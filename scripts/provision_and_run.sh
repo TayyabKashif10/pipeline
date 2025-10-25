@@ -20,7 +20,7 @@ MACHINES=(
 
 IMAGE_FAMILY="ubuntu-2204-lts"
 IMAGE_PROJECT="ubuntu-os-cloud"
-WORKLOAD="sysbench"
+WORKLOAD="all"
 WORKLOAD_RUN_TIME=300   # seconds
 WARMUP_TIME=60
 

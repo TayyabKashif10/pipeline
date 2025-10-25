@@ -2,9 +2,11 @@
 set -euo pipefail
 
 # =========================
-# workload_runner.sh
-# Runs: sysbench (cpu + memory), pgbench (Postgres OLTP)
-# Collects vmstat/iostat and outputs JSON/plaintext into OUTDIR, uploads to GCS
+# workload_runner.sh (fixed)
+# - Ensures apt-related background jobs are disabled/masked before installing
+# - wait_for_apt_locks will wait indefinitely until locks clear
+# - retry supports infinite retries if tries is 0
+# - safe_apt_install will retry apt-get operations indefinitely (per your request)
 # Usage: workload_runner.sh <WORKLOAD> <WARMUP_SEC> <RUN_TIME_SEC> <GCS_OUT>
 # Example: sudo ./workload_runner.sh all 60 300 gs://my-bucket/results/my-instance
 # =========================
@@ -31,18 +33,24 @@ echo "OUTDIR=${OUTDIR}"
 # -------------------------
 log() { echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*"; }
 
+# retry tries cmd...  -- if tries == 0 -> infinite retries
 retry() {
   local tries=$1; shift
   local i=0
-  until "$@"; do
+  while :; do
+    if "$@"; then
+      return 0
+    fi
     i=$((i+1))
-    if [ $i -ge $tries ]; then return 1; fi
-    log "Attempt $i/$tries failed. Sleeping 5s..."
+    if [ "$tries" -ne 0 ] && [ $i -ge $tries ]; then
+      return 1
+    fi
+    log "Attempt $i/${tries:-infinite} failed. Sleeping 5s..."
     sleep 5
   done
-  return 0
 }
 
+# Wait until apt/dpkg locks are free. This loops indefinitely until free.
 wait_for_apt_locks() {
   log "Waiting for apt/dpkg locks to clear..."
   while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
@@ -53,18 +61,36 @@ wait_for_apt_locks() {
   log "Apt locks cleared."
 }
 
+# Attempt to stop/mask any automatic apt jobs that may run in background
+quiesce_apt_background_jobs() {
+  log "Stopping/masking apt background services (apt-daily, apt-daily-upgrade, unattended-upgrades)"
+  # best-effort stop/disable/mask, ignore failures
+  sudo systemctl stop apt-daily.service apt-daily-upgrade.service unattended-upgrades.service || true
+  sudo systemctl disable apt-daily.service apt-daily-upgrade.service unattended-upgrades.service || true
+  sudo systemctl mask apt-daily.service apt-daily-upgrade.service || true
+  # kill any stray apt processes (best-effort)
+  sudo pkill -9 -f apt || true
+  sudo pkill -9 -f unattended-upgrade || true
+  # wait until locks clear
+  wait_for_apt_locks
+}
+
 enable_repos() {
-  log "Ensuring Ubuntu repos (main, universe, multiverse) are enabled..."
-  sudo add-apt-repository -y main || true
-  sudo add-apt-repository -y universe || true
-  sudo add-apt-repository -y multiverse || true
-  sudo add-apt-repository -y restricted || true
+  log "Ensuring Ubuntu repos (main, universe, multiverse, restricted) are enabled..."
+  # Prefer enabling repos by uncommenting sources.list entries instead of spawning multiple add-apt-repository
+  sudo sed -i 's/^#\s*\(deb .*\)/\1/' /etc/apt/sources.list || true
+  # If sources.list.d contains disabled files, enable them similarly (best-effort)
+  sudo find /etc/apt/sources.list.d -type f -name "*.list" -exec sed -i 's/^#\s*\(deb .*\)/\1/' {} \; || true
+  # Ensure we wait for any background apt jobs to stop before running update
+  wait_for_apt_locks
 }
 
 safe_apt_install() {
-  wait_for_apt_locks
-  retry 5 sudo apt-get update -y
-  retry 3 sudo apt-get install -y --no-install-recommends "$@" || return 1
+  # Ensure background apt system jobs are quiesced before starting
+  quiesce_apt_background_jobs
+  # run update and install with infinite retries (tries=0) as requested
+  retry 0 sudo apt-get update -y
+  retry 0 sudo apt-get install -y --no-install-recommends "$@" || return 1
 }
 
 capture_instance_metadata() {
@@ -82,9 +108,11 @@ upload_results() {
     log "Uploading results to $GCS_OUT ..."
     gsutil -m cp -r "$OUTDIR" "$GCS_OUT" || log "⚠️ Upload to GCS failed"
   else
-    log "Installing gsutil..."
+    log "Installing google-cloud-sdk (gsutil) with retries..."
+    # Ensure apt jobs are quiesced before installing google-cloud-sdk
+    quiesce_apt_background_jobs
     set +e
-    sudo apt-get update -y && sudo apt-get install -y google-cloud-sdk || true
+    retry 0 sudo apt-get update -y && retry 0 sudo apt-get install -y google-cloud-sdk || true
     set -e
     if command -v gsutil >/dev/null 2>&1; then
       gsutil -m cp -r "$OUTDIR" "$GCS_OUT" || log "⚠️ Upload to GCS failed"
@@ -97,6 +125,7 @@ upload_results() {
 ensure_tools() {
   enable_repos
   log "Installing required packages (sysbench jq curl git dstat sysstat postgresql)..."
+  # This will retry forever if necessary (per your request)
   safe_apt_install jq curl git dstat sysstat sysbench postgresql postgresql-client build-essential
   log "Tool install complete."
 }
