@@ -30,67 +30,55 @@ retry() {
   [ "$n" -lt "$try" ]
 }
 
+# === HELPER: wait for apt lock ===
+wait_for_apt() {
+  echo "⏳ Waiting for apt/dpkg locks to clear..."
+  while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+        sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
+        sudo fuser /var/cache/apt/archives/lock >/dev/null 2>&1; do
+    sleep 5
+  done
+  echo "✅ Apt locks cleared."
+}
+
 # === INSTALL DEPENDENCIES ===
-echo "Installing required packages..."
-
+wait_for_apt
 retry 3 sudo apt-get update -y
+retry 3 sudo apt-get install -y jq curl git build-essential sysbench || {
+  echo "⚠️ Sysbench package not found; building from source."
+  git clone https://github.com/akopytov/sysbench.git /tmp/sysbench-src
+  cd /tmp/sysbench-src
+  ./autogen.sh && ./configure && make -j"$(nproc)" && sudo make install
+  cd - && rm -rf /tmp/sysbench-src
+}
 
-# Enable universe (Ubuntu) or contrib (Debian)
-if [ -f /etc/lsb-release ]; then
-  echo "Detected Ubuntu. Ensuring universe repo is enabled..."
-  sudo apt-get install -y software-properties-common
-  sudo add-apt-repository -y universe || true
-elif grep -qi debian /etc/os-release; then
-  echo "Detected Debian. Enabling contrib repo..."
-  sudo sed -Ei 's/^# deb-src/deb-src/' /etc/apt/sources.list || true
-fi
-
-retry 3 sudo apt-get update -y
-retry 3 sudo apt-get install -y jq curl git build-essential || true
-
-# Sysbench is sometimes in a separate repo
-if ! command -v sysbench &>/dev/null; then
-  echo "Installing sysbench..."
-  retry 3 sudo apt-get install -y sysbench || {
-    echo "Sysbench package not found. Trying to build from source..."
-    git clone https://github.com/akopytov/sysbench.git /tmp/sysbench-src
-    cd /tmp/sysbench-src
-    ./autogen.sh && ./configure && make -j"$(nproc)" && sudo make install
-    cd -
-  }
-fi
-
-# Verify gsutil (used to copy results to GCS)
+# === VERIFY gsutil ===
 if ! command -v gsutil &>/dev/null; then
-  echo "gsutil not found. Installing Google Cloud SDK..."
-  curl -sSL https://sdk.cloud.google.com | bash || {
-    echo "Warning: Could not install gsutil. Skipping upload step."
-  }
+  echo "⚠️ gsutil not found, installing minimal Cloud SDK..."
+  curl -sSL https://sdk.cloud.google.com | bash >/dev/null 2>&1 || echo "⚠️ Cloud SDK install failed."
   source "$HOME/google-cloud-sdk/path.bash.inc" || true
 fi
 
 # === RUN WORKLOAD ===
 if [ "$WORKLOAD" = "sysbench" ]; then
-  echo "Running sysbench CPU test..."
+  echo "▶ Running sysbench CPU test..."
   sysbench cpu --threads=4 --time="$WARMUP" run > "$OUTDIR/sysbench_warmup.txt" || true
   sysbench cpu --threads=4 --time="$RUN_TIME" run > "$OUTDIR/sysbench_run.txt" || true
 else
-  echo "Unsupported workload: $WORKLOAD"
+  echo "❌ Unsupported workload: $WORKLOAD"
   exit 1
 fi
 
 # === UPLOAD RESULTS ===
 if [ -n "$GCS_OUT" ]; then
-  echo "Uploading results to $GCS_OUT..."
+  echo "☁️ Uploading results to $GCS_OUT..."
   if command -v gsutil &>/dev/null; then
-    retry 3 gsutil -m cp -r "$OUTDIR" "$GCS_OUT" || {
-      echo "⚠️ Failed to upload to GCS after retries."
-    }
+    retry 3 gsutil -m cp -r "$OUTDIR" "$GCS_OUT" || echo "⚠️ Upload failed after retries."
   else
-    echo "⚠️ gsutil not available; skipping upload."
+    echo "⚠️ gsutil unavailable; skipping upload."
   fi
 else
-  echo "No GCS output path provided; results remain local at $OUTDIR"
+  echo "ℹ️ No GCS output path provided; results remain local at $OUTDIR"
 fi
 
 echo "✅ Workload finished successfully."
